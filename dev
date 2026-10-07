@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Thin wrapper to run project commands inside the dev container.
+#   ./dev setup         first-time setup (build, install, key, migrate --seed)
+#   ./dev up            start the stack (app, postgres, redis, mailpit)
+#   ./dev artisan ...   php artisan ...
+#   ./dev composer ...  composer ...
+#   ./dev npm ...       npm ...
+#   ./dev test          composer test
+#   ./dev sh            shell in the app container
+set -euo pipefail
+cd "$(dirname "$0")"
+
+export UID GID="$(id -g)"
+DC=(docker compose)
+RUN=("${DC[@]}" run --rm --no-deps app)
+
+case "${1:-help}" in
+  setup)
+    [ -f .env ] || cp .env.example .env
+    "${DC[@]}" build
+    "${RUN[@]}" composer install --no-interaction
+    "${RUN[@]}" npm ci
+    grep -q '^APP_KEY=base64' .env || "${RUN[@]}" php artisan key:generate
+    "${DC[@]}" run --rm app php artisan migrate --seed --force
+    echo "Done. Start the stack with: ./dev up -d"
+    ;;
+  up)       shift; exec "${DC[@]}" up "$@" ;;
+  down)     shift; exec "${DC[@]}" down "$@" ;;
+  build)    shift; exec "${DC[@]}" build "$@" ;;
+  artisan)  shift; exec "${DC[@]}" run --rm app php artisan "$@" ;;
+  composer) shift; exec "${RUN[@]}" composer "$@" ;;
+  npm)      shift; exec "${RUN[@]}" npm "$@" ;;
+  test)     shift; exec "${DC[@]}" run --rm -e DB_CONNECTION=sqlite -e DB_DATABASE=:memory: app composer test "$@" ;;
+  sh)       exec "${DC[@]}" run --rm app bash ;;
+  *)        sed -n '2,10p' "$0" ;;
+esac

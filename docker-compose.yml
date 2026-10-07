@@ -1,0 +1,64 @@
+# Local development stack. Everything (php, composer, node) runs in `app`;
+# use ./dev to run commands inside it.
+services:
+    app:
+        build:
+            context: docker/dev
+            args:
+                UID: ${UID:-1000}
+                GID: ${GID:-1000}
+        # `composer dev` binds to 127.0.0.1, which the host cannot reach from inside a container.
+        command: >
+            npx concurrently --kill-others --names server,queue,assets
+            "php artisan serve --host=0.0.0.0 --port=8000"
+            "php artisan queue:listen --tries=1"
+            "npm run dev -- --host 0.0.0.0 --port ${VITE_PORT:-5173} --strictPort"
+        working_dir: /var/www/html
+        volumes:
+            - .:/var/www/html
+            - composer-cache:/home/app/.cache/composer
+            - npm-cache:/home/app/.npm
+        ports:
+            - '${APP_PORT:-8300}:8000'
+            - '${VITE_PORT:-5173}:${VITE_PORT:-5173}'
+        depends_on:
+            postgres:
+                condition: service_healthy
+            redis:
+                condition: service_started
+
+    postgres:
+        image: postgres:17-alpine
+        environment:
+            POSTGRES_DB: ${DB_DATABASE:-app}
+            POSTGRES_USER: ${DB_USERNAME:-app}
+            POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+        ports:
+            - '127.0.0.1:${FORWARD_DB_PORT:-5433}:5432'
+        volumes:
+            - postgres-data:/var/lib/postgresql/data
+        healthcheck:
+            test:
+                [
+                    'CMD-SHELL',
+                    'pg_isready -U ${DB_USERNAME:-app} -d ${DB_DATABASE:-app}',
+                ]
+            interval: 5s
+            timeout: 3s
+            retries: 10
+
+    redis:
+        image: redis:7-alpine
+        volumes:
+            - redis-data:/data
+
+    mailpit:
+        image: axllent/mailpit
+        ports:
+            - '127.0.0.1:${FORWARD_MAILPIT_PORT:-8025}:8025'
+
+volumes:
+    postgres-data:
+    redis-data:
+    composer-cache:
+    npm-cache:
